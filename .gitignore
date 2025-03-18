@@ -1,0 +1,28 @@
+# 배포 패키지 폴더
+.serverless
+node_modules
+
+# 환경 변수 파일
+.env
+.env.*
+
+# 로그 파일
+*.log
+
+# OS 파일
+.DS_Store
+Thumbs.db
+
+# IDE 설정
+.vscode
+.idea
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: ${opt:stage, 'dev'}
+  region: ${env:AWS_REGION, 'ap-northeast-2'}
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+    BEDROCK_MODEL_ID: ${env:BEDROCK_MODEL_ID, 'apac.anthropic.claude-3-sonnet-20240229-v1:0'}
+    AWS_REGION: ${env:AWS_REGION, 'ap-northeast-2'}

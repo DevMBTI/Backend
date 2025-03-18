@@ -1,0 +1,216 @@
+service: mbti-analyzer
+
+frameworkVersion: "3"
+
+provider:
+  name: aws
+  runtime: nodejs16.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-northeast-2'}
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+    NODE_ENV: ${self:provider.stage}
+    OPENAI_API_KEY: ${param:OPENAI_API_KEY, ''}
+    COGNITO_USER_POOL_ID: ${self:resources.Outputs.UserPoolId.Value}
+    COGNITO_CLIENT_ID: ${self:resources.Outputs.UserPoolClientId.Value}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    # Bedrock 권한 추가
+    - Effect: Allow
+      Action:
+        - bedrock:InvokeModel
+      Resource: "*"
+
+functions:
+  analyzeResults:
+    handler: src/handlers/analyzeResults.handler
+    events:
+      - http:
+          path: api/analyze
+          method: post
+          cors: true
+  generateQuestion:
+    handler: src/handlers/generateQuestion.handler
+    events:
+      - http:
+          path: api/question
+          method: post
+          cors: true
+  generateAIQuestion:
+    handler: src/handlers/generateQuestion.handler
+    events:
+      - http:
+          path: api/ai/generate-question
+          method: post
+          cors: true
+  getResults:
+    handler: src/handlers/getResults.handler
+    events:
+      - http:
+          path: api/results/{id}
+          method: get
+          cors: true
+  getStats:
+    handler: src/handlers/getStats.handler
+    events:
+      - http:
+          path: api/stats
+          method: get
+          cors: true
+  optionsHandler:
+    handler: src/handlers/options.handler
+    events:
+      - http:
+          path: api/{proxy+}
+          method: options
+          cors: true
+  saveResult:
+    handler: src/handlers/saveResult.handler
+    events:
+      - http:
+          path: api/results
+          method: post
+          cors: true
+  getStatistics:
+    handler: src/handlers/getStatistics.handler
+    events:
+      - http:
+          path: api/statistics
+          method: get
+          cors: true
+
+  # 인증 관련 함수 추가
+  signUp:
+    handler: src/handlers/auth/signUp.handler
+    events:
+      - http:
+          path: api/auth/signup
+          method: post
+          cors: true
+  signIn:
+    handler: src/handlers/auth/signIn.handler
+    events:
+      - http:
+          path: api/auth/signin
+          method: post
+          cors: true
+  confirmSignUp:
+    handler: src/handlers/auth/confirmSignUp.handler
+    events:
+      - http:
+          path: api/auth/confirm
+          method: post
+          cors: true
+  forgotPassword:
+    handler: src/handlers/auth/forgotPassword.handler
+    events:
+      - http:
+          path: api/auth/forgot-password
+          method: post
+          cors: true
+  resetPassword:
+    handler: src/handlers/auth/resetPassword.handler
+    events:
+      - http:
+          path: api/auth/reset-password
+          method: post
+          cors: true
+  getUser:
+    handler: src/handlers/auth/getUser.handler
+    events:
+      - http:
+          path: api/auth/user
+          method: get
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+resources:
+  Resources:
+    DevMBTITable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: createdAt-index
+            KeySchema:
+              - AttributeName: id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    # Cognito 리소스 추가
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:service}-user-pool-${self:provider.stage}
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireNumbers: true
+            RequireUppercase: true
+            RequireSymbols: false
+
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:service}-user-pool-client-${self:provider.stage}
+        UserPoolId:
+          Ref: CognitoUserPool
+        ExplicitAuthFlows:
+          - ALLOW_USER_SRP_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        GenerateSecret: false
+
+    ApiGatewayAuthorizer:
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: cognito-authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - Fn::GetAtt: [CognitoUserPool, Arn]
+
+  # Cognito 출력 값 추가
+  Outputs:
+    UserPoolId:
+      Value:
+        Ref: CognitoUserPool
+      Export:
+        Name: ${self:service}-user-pool-id-${self:provider.stage}
+    UserPoolClientId:
+      Value:
+        Ref: CognitoUserPoolClient
+      Export:
+        Name: ${self:service}-user-pool-client-id-${self:provider.stage}
+
+plugins:
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    httpPort: 3000
